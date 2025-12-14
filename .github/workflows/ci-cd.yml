@@ -45,3 +45,30 @@ jobs:
             docker rm -f my-app-prod 2>/dev/null || true &&
             docker run -d --name my-app-prod --restart unless-stopped -p 8082:80 ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest
           "
+  deploy_to_k8s:
+    needs: build_and_push
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          printf '%s' "${{ secrets.KUBE_CONFIG_DATA }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Ensure minikube is running
+        run: |
+          minikube status || minikube start --driver=docker
+
+      - name: Deploy manifests
+        run: |
+          # если в deployment.yml оставлял плейсхолдер — можно принудительно подставить логин
+          sed -i "s|image: .*\/my-app:latest|image: ${{ secrets.DOCKERHUB_USERNAME }}/my-app:latest|g" k8s/deployment.yml
+          kubectl apply -f k8s/deployment.yml
+          kubectl apply -f k8s/service.yml
+          kubectl rollout status deployment/my-app-deployment --timeout=120s
+          kubectl get pods -o wide
+          kubectl get services
+
